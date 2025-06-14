@@ -1,9 +1,12 @@
+// ignore_for_file: use_build_context_synchronously
+
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:geocoding/geocoding.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const MyApp());
@@ -62,6 +65,18 @@ class _HomeScreenState extends State<HomeScreen> {
   GoogleMapController? _mapController;
   final TextEditingController _searchController = TextEditingController();
   Marker? _searchMarker;
+  Marker? _tappedMarker;
+  LatLng? _tappedLocation;
+
+  Set<Polyline> _polylines = {};
+  List<LatLng> _routeCoordinates = [];
+  bool _isRouteLoading = false;
+
+  List<dynamic> _searchResults = [];
+  bool _isSearching = false;
+
+  String? _routeDistance;
+  String? _routeDuration;
 
   void _recenter(LatLng position) {
     _mapController?.animateCamera(
@@ -71,43 +86,160 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _searchAndNavigate(String query) async {
+  Future<void> _searchLocation(String query) async {
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults = [];
+      });
+      return;
+    }
+    final url = Uri.parse(
+      'https://nominatim.openstreetmap.org/search?q=$query&format=json&addressdetails=1&limit=5',
+    );
+
     try {
-      List<Location> locations = await locationFromAddress(query);
-      if (locations.isNotEmpty) {
-        final location = locations.first;
-        final newLatLng = LatLng(location.latitude, location.longitude);
-        _mapController?.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(target: newLatLng, zoom: 16),
-          ),
-        );
+      final response = await http.get(
+        url,
+        headers: {'User-Agent': 'YourApp/1.0 (your@email.com)'},
+      );
+      if (response.statusCode == 200) {
+        final List results = json.decode(response.body);
+        setState(() {
+          _searchResults = results;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _searchResults = [];
+      });
+    }
+  }
+
+  Future<void> _getRouteDirections(LatLng origin, LatLng destination) async {
+    setState(() {
+      _isRouteLoading = true;
+      _polylines.clear();
+    });
+
+    final url = Uri.parse(
+      'https://router.project-osrm.org/route/v1/driving/'
+      '${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}'
+      '?overview=full&geometries=polyline&alternatives=false&steps=true',
+    );
+
+    try {
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final route = data['routes'][0];
+        final points = route['geometry'];
+
+        _routeCoordinates = _decodePoly(points);
+        final leg = route['legs'][0];
+        _routeDistance = (leg['distance'] / 1000).toStringAsFixed(2) + ' كم';
+        _routeDuration =
+            (leg['duration'] / 60).toStringAsFixed(0) + ' دقيقة تقريباً';
 
         setState(() {
-          _searchMarker = Marker(
-            markerId: const MarkerId('search'),
-            position: newLatLng,
-            infoWindow: InfoWindow(title: query),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueAzure,
+          _polylines.add(
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: _routeCoordinates,
+              color: Colors.blue,
+              width: 5,
             ),
           );
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('لم يتم العثور على الموقع')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('حدث خطأ أثناء تحميل الاتجاهات: $e')),
+      );
+    } finally {
+      setState(() {
+        _isRouteLoading = false;
+      });
     }
+  }
+
+  List<LatLng> _decodePoly(String encoded) {
+    List<LatLng> poly = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      poly.add(LatLng(lat / 1E5, lng / 1E5));
+    }
+    return poly;
+  }
+
+  void _selectSearchResult(dynamic result) {
+    final lat = double.parse(result['lat']);
+    final lon = double.parse(result['lon']);
+    final selectedLatLng = LatLng(lat, lon);
+
+    _mapController?.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: selectedLatLng, zoom: 16),
+      ),
+    );
+
+    setState(() {
+      _searchMarker = Marker(
+        markerId: const MarkerId('search'),
+        position: selectedLatLng,
+        infoWindow: InfoWindow(title: result['display_name']),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+      );
+      _searchResults = [];
+      _searchController.text = result['display_name'];
+      _isSearching = true;
+      _tappedLocation = null;
+      _tappedMarker = null;
+    });
+
+    final current = context.read<LocationCubit>().state;
+    if (current != null) {
+      _getRouteDirections(current, selectedLatLng);
+    }
+
+    FocusScope.of(context).unfocus();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('خريطتي'),
+        backgroundColor: Colors.blue,
+        title: Text(
+          'Transport map',
+          style: TextStyle(color: Colors.white, fontStyle: FontStyle.italic),
+        ),
         leading: PopupMenuButton<MapViewType>(
-          icon: const Icon(Icons.map),
+          color: Colors.blueGrey,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(35)),
+          ),
+          icon: const Icon(Icons.map, color: Colors.white),
           tooltip: 'تغيير نوع الخريطة',
           onSelected: (type) {
             context.read<MapTypeCubit>().setMapViewType(type);
@@ -115,27 +247,63 @@ class _HomeScreenState extends State<HomeScreen> {
           itemBuilder: (context) => const [
             PopupMenuItem(
               value: MapViewType.normal,
-              child: Text('عادي - Normal'),
+              child: Text(
+                'Normal',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: MapViewType.satellite,
-              child: Text('فضائي - Satellite'),
+              child: Text(
+                'Satellite',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: MapViewType.hybrid,
-              child: Text('مختلط - Hybrid'),
+              child: Text(
+                'Hybrid',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: MapViewType.terrain,
-              child: Text('تضاريس - Terrain'),
+              child: Text(
+                'Terrain',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: MapViewType.tilted,
-              child: Text('عرض مائل - 3D'),
+              child: Text(
+                '3D',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
             PopupMenuItem(
               value: MapViewType.earth,
-              child: Text('جوجل إيرث - Earth'),
+              child: Text(
+                'Earth',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
           ],
         ),
@@ -149,52 +317,49 @@ class _HomeScreenState extends State<HomeScreen> {
           return BlocBuilder<MapTypeCubit, MapViewType>(
             builder: (context, mapViewType) {
               MapType mapType;
-              CameraPosition initialCamera;
-
               switch (mapViewType) {
                 case MapViewType.satellite:
                   mapType = MapType.satellite;
-                  initialCamera = CameraPosition(target: location, zoom: 15);
                   break;
                 case MapViewType.hybrid:
+                case MapViewType.tilted:
+                case MapViewType.earth:
                   mapType = MapType.hybrid;
-                  initialCamera = CameraPosition(target: location, zoom: 15);
                   break;
                 case MapViewType.terrain:
                   mapType = MapType.terrain;
-                  initialCamera = CameraPosition(target: location, zoom: 15);
                   break;
-                case MapViewType.tilted:
-                  mapType = MapType.hybrid;
-                  initialCamera = CameraPosition(
-                    target: location,
-                    zoom: 17,
-                    tilt: 160,
-                    bearing: 45,
-                  );
-                  break;
-                case MapViewType.earth:
-                  mapType = MapType.hybrid;
-                  initialCamera = CameraPosition(
-                    target: location,
-                    zoom: 18,
-                    tilt: 70,
-                    bearing: 60,
-                  );
-                  break;
-                case MapViewType.normal:
                 default:
                   mapType = MapType.normal;
-                  initialCamera = CameraPosition(target: location, zoom: 15);
               }
 
               return Stack(
                 children: [
                   GoogleMap(
                     mapType: mapType,
-                    initialCameraPosition: initialCamera,
+                    initialCameraPosition: CameraPosition(
+                      target: location,
+                      zoom: 15,
+                    ),
                     onMapCreated: (controller) {
                       _mapController = controller;
+                    },
+                    onTap: (LatLng pos) {
+                      setState(() {
+                        _tappedLocation = pos;
+                        _tappedMarker = Marker(
+                          markerId: const MarkerId('tapped'),
+                          position: pos,
+                          icon: BitmapDescriptor.defaultMarkerWithHue(
+                            BitmapDescriptor.hueGreen,
+                          ),
+                          infoWindow: const InfoWindow(title: 'الموقع المحدد'),
+                        );
+                        _searchMarker = null;
+                        _routeDistance = null;
+                        _routeDuration = null;
+                        _polylines.clear();
+                      });
                     },
                     markers: {
                       Marker(
@@ -203,11 +368,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         infoWindow: const InfoWindow(title: 'موقعي الحالي'),
                       ),
                       if (_searchMarker != null) _searchMarker!,
+                      if (_tappedMarker != null) _tappedMarker!,
                     },
+                    polylines: _polylines,
                     myLocationEnabled: true,
                     myLocationButtonEnabled: false,
                   ),
-                  // مربع البحث
                   Positioned(
                     top: 12,
                     left: 16,
@@ -215,87 +381,140 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Material(
                       elevation: 4,
                       borderRadius: BorderRadius.circular(8),
-                      child: TextField(
-                        controller: _searchController,
-                        onSubmitted: _searchAndNavigate,
-                        decoration: InputDecoration(
-                          hintText: 'ابحث عن موقع...',
-                          prefixIcon: const Icon(Icons.search),
-                          suffixIcon: IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _searchController,
+                            decoration: InputDecoration(
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              fillColor: Colors.blue[400],
+                              filled: true,
+                              hintStyle: TextStyle(color: Colors.white),
+                              hintText: 'ابحث عن موقع...',
+                              prefixIcon: const Icon(
+                                Icons.search,
+                                color: Colors.white,
+                              ),
+                              suffixIcon: _searchController.text.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      icon: const Icon(
+                                        Icons.clear,
+                                        color: Colors.white,
+                                      ),
+                                      onPressed: () {
+                                        _searchController.clear();
+                                        setState(() {
+                                          _searchResults = [];
+                                          _searchMarker = null;
+                                          _tappedMarker = null;
+                                          _polylines.clear();
+                                          _routeDistance = null;
+                                          _routeDuration = null;
+                                        });
+                                      },
+                                    ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                            ),
+                            onChanged: (value) {
+                              setState(() {
+                                _isSearching = true;
+                              });
+                              _searchLocation(value);
                             },
                           ),
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                        ),
+                          if (_searchResults.isNotEmpty && _isSearching)
+                            Container(
+                              constraints: const BoxConstraints(maxHeight: 200),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: _searchResults.length,
+                                itemBuilder: (context, index) {
+                                  final item = _searchResults[index];
+                                  return ListTile(
+                                    title: Text(item['display_name']),
+                                    onTap: () => _selectSearchResult(item),
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                  // زر إعادة التمركز
                   Positioned(
                     bottom: 100,
                     right: 16,
                     child: FloatingActionButton(
                       onPressed: () => _recenter(location),
-                      child: const Icon(Icons.my_location),
+                      backgroundColor: Colors.blue[700],
+                      child: const Icon(Icons.my_location, color: Colors.white),
                     ),
                   ),
-                  // أزرار تغيير العرض
-                  Positioned(
-                    bottom: 16,
-                    left: 16,
-                    right: 16,
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                  if ((_searchMarker != null || _tappedLocation != null) &&
+                      !_isRouteLoading)
+                    Positioned(
+                      bottom: 60,
+                      left: 16,
+                      right: 16,
+                      child: Column(
                         children: [
-                          _mapTypeButton(context, MapViewType.normal, 'عادي'),
-                          _mapTypeButton(
-                            context,
-                            MapViewType.satellite,
-                            'فضائي',
+                          if (_routeDistance != null && _routeDuration != null)
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'المسافة: $_routeDistance\nالمدة: $_routeDuration',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          ElevatedButton.icon(
+                            icon: const Icon(Icons.directions),
+                            label: const Text("ابدأ التوجيه"),
+                            onPressed: () {
+                              final current = context
+                                  .read<LocationCubit>()
+                                  .state;
+                              if (current != null) {
+                                LatLng? target =
+                                    _searchMarker?.position ?? _tappedLocation;
+                                if (target != null) {
+                                  _getRouteDirections(current, target);
+                                }
+                              }
+                            },
                           ),
-                          _mapTypeButton(context, MapViewType.hybrid, 'مختلط'),
-                          _mapTypeButton(
-                            context,
-                            MapViewType.terrain,
-                            'تضاريس',
-                          ),
-                          _mapTypeButton(context, MapViewType.tilted, 'مائل'),
-                          _mapTypeButton(context, MapViewType.earth, 'إيرث'),
                         ],
                       ),
                     ),
-                  ),
+                  if (_isRouteLoading)
+                    const Positioned(
+                      bottom: 16,
+                      left: 0,
+                      right: 0,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
                 ],
               );
             },
           );
         },
-      ),
-    );
-  }
-
-  Widget _mapTypeButton(BuildContext context, MapViewType type, String label) {
-    final current = context.watch<MapTypeCubit>().state;
-    final isSelected = current == type;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isSelected ? Colors.blueAccent : Colors.grey[300],
-          foregroundColor: isSelected ? Colors.white : Colors.black,
-        ),
-        onPressed: () {
-          context.read<MapTypeCubit>().setMapViewType(type);
-        },
-        child: Text(label),
       ),
     );
   }
