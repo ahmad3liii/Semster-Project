@@ -258,15 +258,66 @@ class _HomeScreenState extends State<HomeScreen> {
             context.read<MapTypeCubit>().setMapViewType(type);
           },
           itemBuilder: (context) => const [
-            PopupMenuItem(value: MapViewType.normal, child: Text('Normal')),
+            PopupMenuItem(
+              value: MapViewType.normal,
+              child: Text(
+                'Normal',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
             PopupMenuItem(
               value: MapViewType.satellite,
-              child: Text('Satellite'),
+              child: Text(
+                'Satellite',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
             ),
-            PopupMenuItem(value: MapViewType.hybrid, child: Text('Hybrid')),
-            PopupMenuItem(value: MapViewType.terrain, child: Text('Terrain')),
-            PopupMenuItem(value: MapViewType.tilted, child: Text('3D')),
-            PopupMenuItem(value: MapViewType.earth, child: Text('Earth')),
+            PopupMenuItem(
+              value: MapViewType.hybrid,
+              child: Text(
+                'Hybrid',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            PopupMenuItem(
+              value: MapViewType.terrain,
+              child: Text(
+                'Terrain',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            PopupMenuItem(
+              value: MapViewType.tilted,
+              child: Text(
+                '3D',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            PopupMenuItem(
+              value: MapViewType.earth,
+              child: Text(
+                'Earth',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
           ],
         ),
       ),
