@@ -1,6 +1,7 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -78,6 +79,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _routeDistance;
   String? _routeDuration;
 
+  Timer? _debounce;
+  Map<String, List<dynamic>> _cachedSearches = {};
+
   void _recenter(LatLng position) {
     _mapController?.animateCamera(
       CameraUpdate.newCameraPosition(
@@ -93,6 +97,14 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       return;
     }
+
+    if (_cachedSearches.containsKey(query)) {
+      setState(() {
+        _searchResults = _cachedSearches[query]!;
+      });
+      return;
+    }
+
     final url = Uri.parse(
       'https://nominatim.openstreetmap.org/search?q=$query&format=json&addressdetails=1&limit=5',
     );
@@ -104,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (response.statusCode == 200) {
         final List results = json.decode(response.body);
+        _cachedSearches[query] = results;
         setState(() {
           _searchResults = results;
         });
@@ -211,8 +224,8 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       );
       _searchResults = [];
+      _isSearching = false; // هنا تم إضافة السطر لإخفاء مؤشر البحث
       _searchController.text = result['display_name'];
-      _isSearching = true;
       _tappedLocation = null;
       _tappedMarker = null;
     });
@@ -245,66 +258,15 @@ class _HomeScreenState extends State<HomeScreen> {
             context.read<MapTypeCubit>().setMapViewType(type);
           },
           itemBuilder: (context) => const [
-            PopupMenuItem(
-              value: MapViewType.normal,
-              child: Text(
-                'Normal',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
+            PopupMenuItem(value: MapViewType.normal, child: Text('Normal')),
             PopupMenuItem(
               value: MapViewType.satellite,
-              child: Text(
-                'Satellite',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
+              child: Text('Satellite'),
             ),
-            PopupMenuItem(
-              value: MapViewType.hybrid,
-              child: Text(
-                'Hybrid',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-            PopupMenuItem(
-              value: MapViewType.terrain,
-              child: Text(
-                'Terrain',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-            PopupMenuItem(
-              value: MapViewType.tilted,
-              child: Text(
-                '3D',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-            PopupMenuItem(
-              value: MapViewType.earth,
-              child: Text(
-                'Earth',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
+            PopupMenuItem(value: MapViewType.hybrid, child: Text('Hybrid')),
+            PopupMenuItem(value: MapViewType.terrain, child: Text('Terrain')),
+            PopupMenuItem(value: MapViewType.tilted, child: Text('3D')),
+            PopupMenuItem(value: MapViewType.earth, child: Text('Earth')),
           ],
         ),
       ),
@@ -426,12 +388,24 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             onChanged: (value) {
-                              setState(() {
-                                _isSearching = true;
-                              });
-                              _searchLocation(value);
+                              if (_debounce?.isActive ?? false)
+                                _debounce!.cancel();
+                              _debounce = Timer(
+                                const Duration(milliseconds: 500),
+                                () {
+                                  setState(() {
+                                    _isSearching = true;
+                                  });
+                                  _searchLocation(value);
+                                },
+                              );
                             },
                           ),
+                          if (_isSearching && _searchResults.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: LinearProgressIndicator(),
+                            ),
                           if (_searchResults.isNotEmpty && _isSearching)
                             Container(
                               constraints: const BoxConstraints(maxHeight: 200),
