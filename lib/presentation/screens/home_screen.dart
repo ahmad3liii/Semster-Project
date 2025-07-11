@@ -1,57 +1,13 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 
-void main() {
-  runApp(const MyApp());
-}
-
-class LocationCubit extends Cubit<LatLng?> {
-  LocationCubit() : super(null);
-
-  Future<void> getCurrentLocation() async {
-    final status = await Permission.location.request();
-    if (status.isGranted) {
-      final position = await Geolocator.getCurrentPosition();
-      emit(LatLng(position.latitude, position.longitude));
-    } else {
-      emit(null);
-    }
-  }
-}
-
-enum MapViewType { normal, satellite, hybrid, terrain, tilted, earth }
-
-class MapTypeCubit extends Cubit<MapViewType> {
-  MapTypeCubit() : super(MapViewType.normal);
-
-  void setMapViewType(MapViewType type) => emit(type);
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MultiBlocProvider(
-      providers: [
-        BlocProvider(create: (_) => LocationCubit()..getCurrentLocation()),
-        BlocProvider(create: (_) => MapTypeCubit()),
-      ],
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'تجربة الخرائط والموقع',
-        theme: ThemeData(primarySwatch: Colors.blue),
-        home: const HomeScreen(),
-      ),
-    );
-  }
-}
+import '../../cubits/location_cubit.dart';
+import '../../cubits/map_type_cubit.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -222,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       );
       _searchResults = [];
-      _isSearching = false; // هنا تم إضافة السطر لإخفاء مؤشر البحث
+      _isSearching = false;
       _searchController.text = result['display_name'];
       _tappedLocation = null;
       _tappedMarker = null;
@@ -241,13 +197,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blue,
-        title: Text(
+        title: const Text(
           'Transport map',
           style: TextStyle(color: Colors.white, fontStyle: FontStyle.italic),
         ),
         leading: PopupMenuButton<MapViewType>(
           color: Colors.blueGrey,
-          shape: RoundedRectangleBorder(
+          shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(35)),
           ),
           icon: const Icon(Icons.map, color: Colors.white),
@@ -406,7 +362,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               fillColor: Colors.blue[400],
                               filled: true,
-                              hintStyle: TextStyle(color: Colors.white),
+                              hintStyle: const TextStyle(color: Colors.white),
                               hintText: 'ابحث عن موقع...',
                               prefixIcon: const Icon(
                                 Icons.search,
@@ -431,42 +387,39 @@ class _HomeScreenState extends State<HomeScreen> {
                                         });
                                       },
                                     ),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 14,
-                              ),
                             ),
-                            onChanged: (value) {
+                            style: const TextStyle(color: Colors.white),
+                            onChanged: (text) {
                               if (_debounce?.isActive ?? false)
                                 _debounce!.cancel();
                               _debounce = Timer(
-                                const Duration(milliseconds: 500),
+                                const Duration(milliseconds: 600),
                                 () {
+                                  _searchLocation(text);
                                   setState(() {
-                                    _isSearching = true;
+                                    _isSearching = text.isNotEmpty;
                                   });
-                                  _searchLocation(value);
                                 },
                               );
                             },
+                            onSubmitted: (text) {
+                              if (_searchResults.isNotEmpty) {
+                                _selectSearchResult(_searchResults.first);
+                              }
+                            },
                           ),
-                          if (_isSearching && _searchResults.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(8.0),
-                              child: LinearProgressIndicator(),
-                            ),
-                          if (_searchResults.isNotEmpty && _isSearching)
+
+                          if (_isSearching && _searchResults.isNotEmpty)
                             Container(
-                              constraints: const BoxConstraints(maxHeight: 200),
+                              height: 160,
+                              color: Colors.white,
                               child: ListView.builder(
-                                shrinkWrap: true,
                                 itemCount: _searchResults.length,
                                 itemBuilder: (context, index) {
-                                  final item = _searchResults[index];
+                                  final result = _searchResults[index];
                                   return ListTile(
-                                    title: Text(item['display_name']),
-                                    onTap: () => _selectSearchResult(item),
+                                    title: Text(result['display_name']),
+                                    onTap: () => _selectSearchResult(result),
                                   );
                                 },
                               ),
@@ -475,64 +428,63 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
-                  Positioned(
-                    bottom: 100,
-                    right: 16,
-                    child: FloatingActionButton(
-                      onPressed: () => _recenter(location),
-                      backgroundColor: Colors.blue[700],
-                      child: const Icon(Icons.my_location, color: Colors.white),
-                    ),
-                  ),
-                  if ((_searchMarker != null || _tappedLocation != null) &&
-                      !_isRouteLoading)
+
+                  if (_isRouteLoading)
+                    const Center(child: CircularProgressIndicator()),
+
+                  if (_routeDistance != null && _routeDuration != null)
                     Positioned(
-                      bottom: 60,
+                      bottom: 16,
                       left: 16,
                       right: 16,
-                      child: Column(
-                        children: [
-                          if (_routeDistance != null && _routeDuration != null)
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                'المسافة: $_routeDistance\nالمدة: $_routeDuration',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          const SizedBox(height: 8),
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.directions),
-                            label: const Text("ابدأ التوجيه"),
-                            onPressed: () {
-                              final current = context
-                                  .read<LocationCubit>()
-                                  .state;
-                              if (current != null) {
-                                LatLng? target =
-                                    _searchMarker?.position ?? _tappedLocation;
-                                if (target != null) {
-                                  _getRouteDirections(current, target);
-                                }
-                              }
-                            },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.7),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          'المسافة: $_routeDistance\nالمدة: $_routeDuration',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
-                        ],
+                        ),
                       ),
                     ),
-                  if (_isRouteLoading)
-                    const Positioned(
+
+                  Positioned(
+                    bottom: 80,
+                    right: 16,
+                    child: FloatingActionButton(
+                      heroTag: 'btn_recenter',
+                      onPressed: () {
+                        if (location != null) {
+                          _recenter(location);
+                        }
+                      },
+                      backgroundColor: Colors.blue,
+                      child: const Icon(Icons.my_location),
+                    ),
+                  ),
+
+                  if (_tappedLocation != null)
+                    Positioned(
                       bottom: 16,
-                      left: 0,
-                      right: 0,
-                      child: Center(child: CircularProgressIndicator()),
+                      right: 80,
+                      child: FloatingActionButton(
+                        heroTag: 'btn_route',
+                        onPressed: () {
+                          final current = context.read<LocationCubit>().state;
+                          if (current != null) {
+                            _getRouteDirections(current, _tappedLocation!);
+                          }
+                        },
+                        backgroundColor: Colors.blue,
+                        child: const Icon(Icons.directions),
+                      ),
                     ),
                 ],
               );

@@ -58,6 +58,8 @@ dependencies:
   http: ^1.4.0
   flutter_typeahead: ^5.2.0
   google_places_flutter: ^2.1.0
+  flutter_compass: ^0.8.1
+  vector_math: ^2.1.4
   
 
 dev_dependencies:
