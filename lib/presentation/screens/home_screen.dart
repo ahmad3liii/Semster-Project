@@ -434,9 +434,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   if (_routeDistance != null && _routeDuration != null)
                     Positioned(
-                      bottom: 16,
-                      left: 16,
-                      right: 16,
+                      bottom: 150,
+                      left: 70,
+                      right: 70,
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -456,10 +456,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
 
                   Positioned(
-                    bottom: 80,
-                    right: 16,
+                    bottom: 100,
+                    right: 10,
                     child: FloatingActionButton(
                       heroTag: 'btn_recenter',
+                      tooltip: "تحديد موقعي",
                       onPressed: () {
                         if (location != null) {
                           _recenter(location);
@@ -472,17 +473,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   if (_tappedLocation != null)
                     Positioned(
-                      bottom: 16,
-                      right: 80,
+                      bottom: 160,
+                      right: 10,
                       child: FloatingActionButton(
                         heroTag: 'btn_route',
+                        tooltip: "رسم المسار ",
                         onPressed: () {
                           final current = context.read<LocationCubit>().state;
                           if (current != null) {
                             _getRouteDirections(current, _tappedLocation!);
                           }
                         },
-                        backgroundColor: Colors.blue,
+                        backgroundColor: const Color.fromARGB(112, 20, 219, 27),
                         child: const Icon(Icons.directions),
                       ),
                     ),
