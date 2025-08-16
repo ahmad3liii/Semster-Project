@@ -129,6 +129,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Decode a polyline string (encoded using Google's algorithm)
+  /// into a list of LatLng coordinates.
+  ///
+  /// This is useful when working with Google Directions API or similar
+  /// services that return compressed polyline strings.
+  ///
+  /// Params:
+  ///   - encoded: A polyline string encoded by the Google Maps API.
+  ///
+  /// Returns:
+  ///   - A list of LatLng points representing the decoded polyline.
   List<LatLng> _decodePoly(String encoded) {
     List<LatLng> poly = [];
     int index = 0, len = encoded.length;
